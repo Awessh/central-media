@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' data: blob: file: http: https: ws:; script-src 'self' 'unsafe-inline'; media-src 'self' data: blob: file: http: https:;">
+  <title>Media Player</title>
+  <link rel="stylesheet" href="fontawesome/css/all.min.css">
+  <link rel="stylesheet" href="renderer/index.css">
+</head>
+<body>
+  <!-- ---------- Préchargeur (écran de démarrage animé) ---------- -->
+  <div id="preloader">
+    <div id="boot-logo">
+        <img src="medias/logo.png" alt="">
+    </div>
+  </div>
+
+<div id="app">
+
+  <!-- Barre horizontale d'options -->
+  <nav id="menubar">
+    <div class="menubar-group">
+      <button class="menu-btn" data-menu="fichier"><i class="fa-solid fa-folder-open"></i> Fichier</button>
+      <button class="menu-btn" data-menu="lecture"><i class="fa-solid fa-play"></i> Lecture</button>
+      <button class="menu-btn" data-menu="audio"><i class="fa-solid fa-volume-high"></i> Audio</button>
+      <button class="menu-btn" data-menu="video"><i class="fa-solid fa-sliders"></i> Vidéo</button>
+      <button class="menu-btn" data-menu="soustitres"><i class="fa-solid fa-closed-captioning"></i> Sous-titres</button>
+      <button class="menu-btn" data-menu="outils"><i class="fa-solid fa-toolbox"></i> Outils</button>
+    </div>
+    <div class="menubar-group menubar-right">
+      <span id="app-title">Media Player</span>
+      <button class="menu-btn" data-menu="parametres"><i class="fa-solid fa-gear"></i> Paramètres</button>
+    </div>
+  </nav>
+
+  <!-- Menus déroulants -->
+  <div id="dropdown-layer"></div>
+
+  <div id="body">
+
+    <!-- Barre latérale -->
+    <aside id="sidebar">
+      <div id="sidebar-tabs">
+        <button class="tab-btn active" data-tab="playlist" title="Playlist"><i class="fa-solid fa-list"></i></button>
+        <button class="tab-btn" data-tab="podcasts" title="Podcasts"><i class="fa-solid fa-podcast"></i></button>
+        <button class="tab-btn" data-tab="history" title="Historique"><i class="fa-solid fa-clock-rotate-left"></i></button>
+        <button class="tab-btn" data-tab="bookmarks" title="Marque-pages"><i class="fa-solid fa-bookmark"></i></button>
+        <button class="tab-btn" data-tab="notes" title="Notes"><i class="fa-solid fa-note-sticky"></i></button>
+        <button class="tab-btn" data-tab="lyrics" title="Paroles"><i class="fa-solid fa-music"></i></button>
+        <button class="tab-btn" data-tab="stats" title="Statistiques"><i class="fa-solid fa-chart-simple"></i></button>
+      </div>
+
+      <div class="tab-panel active" data-panel="playlist">
+        <div class="panel-actions">
+          <button id="addFiles" title="Ajouter des fichiers"><i class="fa-solid fa-plus"></i></button>
+          <button id="loadFolder" title="Ouvrir un dossier"><i class="fa-solid fa-folder-open"></i></button>
+          <button id="loadPlaylistFile" title="Charger une playlist (m3u/pls/xspf)"><i class="fa-solid fa-file-import"></i></button>
+          <button id="savePlaylistFile" title="Enregistrer la playlist"><i class="fa-solid fa-file-export"></i></button>
+          <button id="clearPlaylist" title="Vider"><i class="fa-solid fa-trash-can"></i></button>
+        </div>
+        <ul id="playlist-list" class="media-list"></ul>
+        <p class="empty-hint hidden" id="playlist-empty">Playlist vide. Ajoute des fichiers, un dossier, ou glisse-dépose des médias ici.</p>
+      </div>
+
+      <div class="tab-panel" data-panel="podcasts">
+        <div class="panel-actions">
+          <button id="addPodcast" title="Ajouter un podcast (URL RSS)"><i class="fa-solid fa-plus"></i></button>
+        </div>
+        <ul id="podcast-list" class="media-list"></ul>
+        <ul id="podcast-episodes" class="media-list hidden"></ul>
+      </div>
+
+      <div class="tab-panel" data-panel="history">
+        <div class="panel-actions">
+          <button id="clearHistory" title="Effacer l'historique"><i class="fa-solid fa-trash-can"></i></button>
+        </div>
+        <ul id="history-list" class="media-list"></ul>
+        <p class="empty-hint hidden" id="history-empty">Aucun historique pour le moment.</p>
+      </div>
+
+      <div class="tab-panel" data-panel="bookmarks">
+        <ul id="bookmark-list" class="media-list"></ul>
+        <p class="empty-hint hidden" id="bookmarks-empty">Aucun marque-page. Utilise "B" pendant la lecture.</p>
+      </div>
+
+      <div class="tab-panel" data-panel="notes">
+        <div class="note-input-row">
+          <input type="text" id="noteInput" placeholder="Ajouter une note à l'instant courant…">
+          <button id="addNoteBtn"><i class="fa-solid fa-plus"></i></button>
+        </div>
+        <ul id="notes-list" class="media-list"></ul>
+      </div>
+
+      <div class="tab-panel" data-panel="lyrics">
+        <div id="lyrics-view">
+          <div id="lyrics-cover"><i class="fa-solid fa-compact-disc"></i></div>
+          <div id="lyrics-meta">
+            <div id="lyrics-title">—</div>
+            <div id="lyrics-artist">—</div>
+            <div id="lyrics-album-year"></div>
+          </div>
+          <div class="panel-actions">
+            <button id="loadLyricsFile" title="Charger un fichier .lrc"><i class="fa-solid fa-file-lines"></i> Paroles (.lrc)</button>
+          </div>
+          <div id="lyrics-lines"></div>
+        </div>
+      </div>
+
+      <div class="tab-panel" data-panel="stats">
+        <div id="stats-view">
+          <div class="stat-card"><div class="stat-value" id="stat-watched">0h</div><div class="stat-label">Temps regardé</div></div>
+          <div class="stat-card"><div class="stat-value" id="stat-remaining">0h</div><div class="stat-label">Temps restant (playlist)</div></div>
+          <div class="stat-card"><div class="stat-value" id="stat-count">0</div><div class="stat-label">Nombre de lectures</div></div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Scène de lecture -->
+    <main id="stage">
+
+      <div id="video-wrap">
+        <video id="video" playsinline></video>
+        <canvas id="capture-canvas" class="hidden"></canvas>
+      </div>
+      <audio id="audio"></audio>
+
+      <div id="empty-state">
+        <i class="fa-solid fa-photo-film"></i>
+        <p>Glisse-dépose une vidéo, un audio, un dossier ou une playlist ici</p>
+        <div class="empty-actions">
+          <button id="openFileEmpty"><i class="fa-solid fa-folder-open"></i> Ouvrir un fichier</button>
+          <button id="openFolderEmpty"><i class="fa-solid fa-folder-tree"></i> Ouvrir un dossier</button>
+          <button id="openUrlEmpty"><i class="fa-solid fa-link"></i> Ouvrir une URL / un flux</button>
+        </div>
+      </div>
+
+      <div id="converting-overlay" class="hidden"><div class="spinner"></div><p>Conversion / connexion en cours…</p></div>
+      <div id="resume-toast" class="hidden"></div>
+      <div id="osd" class="hidden"></div>
+
+      <div id="topbar">
+        <button id="sidebarToggle" title="Playlist"><i class="fa-solid fa-bars"></i></button>
+        <span id="filename"></span>
+        <div class="topbar-right">
+          <button id="remoteIndicator" title="Télécommande"><i class="fa-solid fa-mobile-screen-button"></i></button>
+          <button id="pip" title="Image dans l'image"><i class="fa-solid fa-clone"></i></button>
+          <button id="alwaysOnTopBtn" title="Toujours au premier plan"><i class="fa-solid fa-thumbtack"></i></button>
+        </div>
+      </div>
+
+      <div id="controls">
+        <div class="controls-row controls-progress">
+          <span id="currentTime">00:00</span>
+          <div id="progress-wrap">
+            <input id="progress" type="range" min="0" max="1000" value="0">
+            <div id="chapters-track"></div>
+            <div id="bookmarks-track"></div>
+          </div>
+          <span id="duration">00:00</span>
+        </div>
+
+        <div class="controls-row controls-main">
+          <div class="controls-left">
+            <button id="prevBtn" title="Précédent"><i class="fa-solid fa-backward-step"></i></button>
+            <button id="back10" title="Reculer 10s"><i class="fa-solid fa-rotate-left"></i></button>
+            <button id="frameBack" title="Image précédente"><i class="fa-solid fa-caret-left"></i>|</button>
+            <button id="playPause" title="Lecture / Pause" class="big-btn"><i class="fa-solid fa-play"></i></button>
+            <button id="frameForward" title="Image suivante">|<i class="fa-solid fa-caret-right"></i></button>
+            <button id="forward10" title="Avancer 10s"><i class="fa-solid fa-rotate-right"></i></button>
+            <button id="nextBtn" title="Suivant"><i class="fa-solid fa-forward-step"></i></button>
+            <button id="stop" title="Stop"><i class="fa-solid fa-stop"></i></button>
+          </div>
+
+          <div class="controls-center">
+            <select id="chapterSelect" class="hidden" title="Chapitres"></select>
+          </div>
+
+          <div class="controls-right">
+            <button id="mute" title="Muet"><i class="fa-solid fa-volume-high"></i></button>
+            <input id="volume" type="range" min="0" max="100" value="100">
+            <select id="speed" title="Vitesse de lecture">
+              <option value="0.25">0.25x</option><option value="0.5">0.5x</option><option value="0.75">0.75x</option>
+              <option value="1" selected>1x</option><option value="1.25">1.25x</option><option value="1.5">1.5x</option><option value="2">2x</option>
+            </select>
+            <button id="autoplayNext" class="active" title="Lecture automatique"><i class="fa-solid fa-link"></i></button>
+            <button id="repeat" title="Répéter"><i class="fa-solid fa-repeat"></i></button>
+            <button id="screenshotBtn" title="Capture d'écran"><i class="fa-solid fa-camera"></i></button>
+            <button id="fullscreen" title="Plein écran"><i class="fa-solid fa-expand"></i></button>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+</div>
+
+<!-- Panneaux flottants (paramètres, à propos, infos média, télécommande...) -->
+<div id="modal-layer"></div>
+
+<!-- Bibliothèques de streaming (à installer via npm) -->
+<script src="node_modules/hls.js/dist/hls.min.js"></script>
+<script src="node_modules/dashjs/dist/dash.all.min.js"></script>
+
+<script src="renderer/modules/preloader.js"></script>
+<script src="renderer/modules/utils.js"></script>
+<script src="renderer/modules/state.js"></script>
+<script src="renderer/modules/modal.js"></script>
+<script src="renderer/modules/menubar.js"></script>
+<script src="renderer/modules/player.js"></script>
+<script src="renderer/modules/streaming.js"></script>
+<script src="renderer/modules/chapters.js"></script>
+<script src="renderer/modules/filters.js"></script>
+<script src="renderer/modules/subtitles.js"></script>
+<script src="renderer/modules/playlist.js"></script>
+<script src="renderer/modules/podcasts.js"></script>
+<script src="renderer/modules/library.js"></script>
+<script src="renderer/modules/lyrics.js"></script>
+<script src="renderer/modules/capture.js"></script>
+<script src="renderer/modules/mediainfo.js"></script>
+<script src="renderer/modules/contextmenu.js"></script>
+<script src="renderer/modules/keyboard.js"></script>
+<script src="renderer/modules/settings.js"></script>
+<script src="renderer/modules/about.js"></script>
+<script src="renderer/modules/remote.js"></script>
+<script src="renderer/modules/init.js"></script>
+</body>
+</html>

@@ -1,0 +1,78 @@
+{
+  "name": "central-media",
+  "version": "1.0.0",
+  "description": "Lecteur vidéo & audio autonome (streaming, playlists, sous-titres, télécommande...)",
+  "main": "main.js",
+  "author": "Awesshhh",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "postinstall": "electron-builder install-app-deps",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9",
+    "ffmpeg-static": "^5.2.0",
+    "ffprobe-static": "^3.1.0",
+    "hls.js": "^1.5.15",
+    "dashjs": "^4.7.4",
+    "express": "^4.19.2",
+    "ws": "^8.18.0",
+    "qrcode": "^1.5.4"
+  },
+  "build": {
+    "appId": "com.browser.mediaplayer",
+    "productName": "Central Media",
+    "directories": {
+      "output": "dist"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Awessh",
+        "repo": "central-media",
+        "releaseType": "release",
+        "private": true
+      }
+    ],
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**/*",
+      "node_modules/ffprobe-static/**/*"
+    ],
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "renderer/**",
+      "server/**",
+      "assets/**",
+      "medias/**",
+      "fontawesome/**",
+      "build/**",
+      "assets/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Central Media",
+      "license": "build/license.txt"
+    }
+  }
+}
