@@ -1,2 +1,10 @@
 build/
 node_modules/
+dist/
+out/
+TEST/
+.env
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
