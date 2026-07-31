@@ -75,6 +75,11 @@ ul{list-style:none;margin:0;padding:0}
 .panel-actions button{background:var(--bg-3);border:1px solid var(--border);border-radius:6px;padding:6px 9px;font-size:12px}
 .panel-actions button:hover{border-color:var(--accent)}
 
+.playlist-type-switch{display:flex;gap:4px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:3px;margin-bottom:10px}
+.pl-type-btn{flex:1;padding:7px 6px;border-radius:6px;font-size:12px;color:var(--text-dim);display:flex;align-items:center;justify-content:center;gap:6px}
+.pl-type-btn.active{background:var(--accent);color:#fff}
+.pl-type-btn:hover:not(.active){color:var(--text)}
+
 .media-list{display:flex;flex-direction:column;gap:3px;overflow-y:auto}
 .media-item{display:flex;align-items:center;gap:8px;padding:6px;border-radius:8px;cursor:pointer}
 .media-item:hover{background:var(--bg-3)}

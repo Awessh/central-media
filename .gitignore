@@ -8,3 +8,6 @@ TEST/
 .DS_Store
 Thumbs.db
 .vscode/
+
+# Fichiers locaux générés par l'app (miniatures, cache média, extraits...)
+media-player-store.json

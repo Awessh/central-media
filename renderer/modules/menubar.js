@@ -72,6 +72,7 @@ App.menubar = (() => {
         item("Général", "fa-gear", () => App.settings.open("general")),
         item("Sous-titres", "fa-font", () => App.settings.open("subtitles")),
         item("Télécommande", "fa-mobile-screen-button", () => App.settings.open("remote")),
+        item("Intégration Windows", "fa-window-restore", () => App.settings.open("windows")),
         item("Mises à jour & À propos", "fa-circle-info", () => App.settings.open("about")),
       ],
     };

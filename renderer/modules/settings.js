@@ -9,6 +9,7 @@ App.settings = (() => {
     { key: "video", label: "Réglages image" },
     { key: "subtitles", label: "Sous-titres" },
     { key: "remote", label: "Télécommande" },
+    { key: "windows", label: "Intégration Windows" },
     { key: "about", label: "À propos" },
   ];
 
@@ -80,6 +81,18 @@ App.settings = (() => {
         <div id="remoteQrHolder"></div>
       </div>`;
 
+    if (key === "windows") return `
+      <div class="settings-section" id="windowsSection">
+        <h3>Menu contextuel de l'Explorateur</h3>
+        <p style="color:var(--text-dim);font-size:12.5px;margin:0">
+          Ajoute une entrée « Ajouter à Central Media Player » au clic droit sur un fichier
+          vidéo ou audio dans l'Explorateur Windows, même quand le lecteur est fermé.
+          Ne modifie pas votre programme par défaut pour ouvrir ces fichiers.
+        </p>
+        <div id="windowsStatus" style="color:var(--text-dim);font-size:12.5px">Vérification…</div>
+        <div class="settings-row"><label>Activer l'intégration Explorer</label><input type="checkbox" id="windowsToggle" disabled></div>
+      </div>`;
+
     if (key === "about") return App.about.render();
 
     return "";
@@ -132,6 +145,8 @@ App.settings = (() => {
       };
     }
 
+    if (key === "windows") wireWindowsIntegration(root);
+
     if (key === "about") App.about.wire(root);
   }
 
@@ -143,6 +158,41 @@ App.settings = (() => {
         ${state.remoteStatus.qrDataUrl ? `<img src="${state.remoteStatus.qrDataUrl}">` : ""}
         <div class="qr-url">${state.remoteStatus.url}</div>
       </div>`;
+  }
+
+  async function wireWindowsIntegration(root) {
+    const statusEl = root.querySelector("#windowsStatus");
+    const toggle = root.querySelector("#windowsToggle");
+    const status = await api.getExplorerIntegrationStatus();
+
+    if (!status.supported) {
+      statusEl.textContent = "Disponible uniquement sur Windows.";
+      toggle.disabled = true;
+      toggle.checked = false;
+      return;
+    }
+
+    toggle.disabled = false;
+    toggle.checked = status.enabled;
+    statusEl.textContent = status.enabled
+      ? "Activée — clic droit sur un fichier média dans l'Explorateur pour l'ajouter."
+      : "Désactivée.";
+
+    toggle.onchange = async (e) => {
+      toggle.disabled = true;
+      statusEl.textContent = "Mise à jour du registre en cours…";
+      const res = e.target.checked ? await api.enableExplorerIntegration() : await api.disableExplorerIntegration();
+      toggle.disabled = false;
+      if (!res.ok) {
+        toggle.checked = !e.target.checked;
+        statusEl.textContent = "Échec : " + (res.message || "erreur inconnue");
+        util.toast("Intégration Explorer : échec (" + (res.message || "erreur") + ")");
+        return;
+      }
+      statusEl.textContent = e.target.checked
+        ? "Activée — clic droit sur un fichier média dans l'Explorateur pour l'ajouter."
+        : "Désactivée.";
+    };
   }
 
   return { open };

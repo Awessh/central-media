@@ -9,10 +9,11 @@ function on(channel, callback) {
 }
 
 contextBridge.exposeInMainWorld("playerAPI", {
-  // Fichiers / dossiers
-  chooseMediaFile: (type) => ipcRenderer.invoke("dialog:choose-media-file", type),
-  chooseMediaFolder: (type) => ipcRenderer.invoke("dialog:choose-media-folder", type),
-  addMediaPaths: (type, paths) => ipcRenderer.invoke("media:add-paths", { type, paths }),
+  // Fichiers / dossiers (le type vidéo/audio est déterminé par extension
+  // côté main process, plus besoin de le préciser depuis le renderer)
+  chooseMediaFile: () => ipcRenderer.invoke("dialog:choose-media-file"),
+  chooseMediaFolder: () => ipcRenderer.invoke("dialog:choose-media-folder"),
+  addMediaPaths: (paths) => ipcRenderer.invoke("media:add-paths", { paths }),
   removeFromPlaylist: (type, id) => ipcRenderer.invoke("media:remove-from-playlist", { type, id }),
   reorderPlaylist: (type, orderedIds) => ipcRenderer.invoke("media:reorder-playlist", { type, orderedIds }),
   clearPlaylist: (type) => ipcRenderer.invoke("media:clear-playlist", type),
@@ -87,4 +88,10 @@ contextBridge.exposeInMainWorld("playerAPI", {
 
   // Événements venant du processus principal
   onThumbnailReady: (cb) => on("media:thumbnail-ready", cb),
+  onMediaAddedExternally: (cb) => on("media:added-externally", cb),
+
+  // Intégration au menu contextuel de l'Explorateur Windows
+  getExplorerIntegrationStatus: () => ipcRenderer.invoke("explorer:get-status"),
+  enableExplorerIntegration: () => ipcRenderer.invoke("explorer:enable"),
+  disableExplorerIntegration: () => ipcRenderer.invoke("explorer:disable"),
 });

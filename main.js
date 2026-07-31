@@ -1,5 +1,11 @@
 "use strict";
 
+// Charge le fichier .env (à la racine du projet) s'il existe, pour lire
+// GH_TOKEN sans jamais l'écrire dans le code source. Ne fait rien si le
+// fichier .env est absent (ex: en production où GH_TOKEN est fourni
+// autrement par l'environnement).
+require("dotenv").config();
+
 const { app, BrowserWindow, ipcMain, dialog, Menu, shell, session } = require("electron");
 const path = require("path");
 const fs = require("fs");
@@ -26,6 +32,57 @@ function unpackPath(p) {
 
 let mainWindow = null;
 const updater = initUpdater({ app, ipcMain, dialog, BrowserWindow });
+
+// ------------------------------------------------------------
+// Instance unique + réception de fichiers depuis l'extérieur
+// (glisser un média sur l'icône, "Ouvrir avec", ou le menu
+// contextuel Windows "Ajouter à Media Player" ajouté plus bas).
+// ------------------------------------------------------------
+const singleInstanceLock = app.requestSingleInstanceLock();
+if (!singleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", (_e, argv) => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    }
+    handleIncomingArgv(argv);
+  });
+}
+
+// Ne garde que les chemins de fichiers existants avec une extension média
+// reconnue (ignore les flags --xxx, le chemin de l'exe, etc.).
+function extractMediaPathsFromArgv(argv) {
+  const out = [];
+  for (const arg of argv) {
+    if (!arg || arg.startsWith("-")) continue;
+    const cleaned = arg.replace(/^"|"$/g, "");
+    if (!mediaTypeForExt(cleaned)) continue;
+    try { if (fs.statSync(cleaned).isFile()) out.push(cleaned); } catch { /* pas un chemin valide, ignoré */ }
+  }
+  return out;
+}
+
+function handleIncomingArgv(argv) {
+  const paths = extractMediaPathsFromArgv(argv);
+  if (!paths.length) return;
+  addPathsFromExternal(paths);
+}
+
+function addPathsFromExternal(paths) {
+  const video = [], audio = [];
+  paths.forEach((p) => {
+    const t = mediaTypeForExt(p);
+    if (!t) return;
+    addToPlaylist(t, p);
+    (t === "audio" ? audio : video).push(p);
+  });
+  if (!video.length && !audio.length) return;
+  broadcast("media:added-externally", { video, audio });
+}
+
 
 
 // ------------------------------------------------------------
@@ -61,6 +118,7 @@ const defaultStore = {
     subtitleStyle: { fontSize: 22, color: "#ffffff", bg: "rgba(0,0,0,0.6)" },
     remoteControl: { enabled: false, port: 8787 },
     updates: { channel: "stable" },
+    explorerIntegration: false,
   },
 };
 
@@ -140,9 +198,20 @@ function createMainWindow() {
 // ------------------------------------------------------------
 const VIDEO_EXT = ["mp4", "mkv", "webm", "avi", "mov", "wmv", "flv", "m4v", "mpg", "mpeg", "ts", "m2ts", "3gp"];
 const AUDIO_EXT = ["mp3", "wav", "flac", "aac", "ogg", "oga", "m4a", "wma", "opus", "aiff", "alac"];
+const ALL_MEDIA_EXT = [...VIDEO_EXT, ...AUDIO_EXT];
 // Formats que <video>/<audio> ne décodent pas nativement dans Chromium et
 // que l'on remuxe/réencode à la volée via ffmpeg avant lecture.
 const NEEDS_CONVERSION_EXT = ["avi", "wmv", "flv", "mkv", "m2ts", "ts", "3gp", "wma"];
+
+// Détermine si un fichier est vidéo ou audio d'après son extension, pour ne
+// plus dépendre d'un type "actif" côté renderer quand on scanne un dossier
+// (un dossier peut contenir un mélange, ou être 100% musique).
+function mediaTypeForExt(filePath) {
+  const ext = path.extname(filePath).toLowerCase().replace(".", "");
+  if (AUDIO_EXT.includes(ext)) return "audio";
+  if (VIDEO_EXT.includes(ext)) return "video";
+  return null;
+}
 
 function scanFolder(folderPath, exts) {
   const results = [];
@@ -562,41 +631,66 @@ ipcMain.handle("remote:get-status", () => remote.getStatus());
 // ------------------------------------------------------------
 // IPC — dialogues fichiers / dossiers
 // ------------------------------------------------------------
-ipcMain.handle("dialog:choose-media-file", async (_e, type) => {
-  const exts = type === "audio" ? AUDIO_EXT : VIDEO_EXT;
+ipcMain.handle("dialog:choose-media-file", async () => {
   const res = await dialog.showOpenDialog(mainWindow, {
-    title: type === "audio" ? "Ouvrir des fichiers audio" : "Ouvrir des fichiers vidéo",
+    title: "Ouvrir des fichiers médias",
     properties: ["openFile", "multiSelections"],
-    filters: [{ name: type === "audio" ? "Audio" : "Vidéo", extensions: exts }, { name: "Tous les fichiers", extensions: ["*"] }],
+    filters: [
+      { name: "Tous les médias", extensions: ALL_MEDIA_EXT },
+      { name: "Vidéo", extensions: VIDEO_EXT },
+      { name: "Audio / Musique", extensions: AUDIO_EXT },
+      { name: "Tous les fichiers", extensions: ["*"] },
+    ],
   });
-  if (res.canceled || !res.filePaths.length) return { paths: [] };
-  res.filePaths.forEach((p) => addToPlaylist(type, p));
-  return { paths: res.filePaths };
+  if (res.canceled || !res.filePaths.length) return { paths: [], video: [], audio: [] };
+
+  const video = [], audio = [];
+  res.filePaths.forEach((p) => {
+    const t = mediaTypeForExt(p) || "video";
+    addToPlaylist(t, p);
+    (t === "audio" ? audio : video).push(p);
+  });
+  return { paths: res.filePaths, video, audio };
 });
 
-ipcMain.handle("dialog:choose-media-folder", async (_e, type) => {
+ipcMain.handle("dialog:choose-media-folder", async () => {
   const res = await dialog.showOpenDialog(mainWindow, { title: "Choisir un dossier", properties: ["openDirectory"] });
   if (res.canceled || !res.filePaths.length) return null;
-  const exts = type === "audio" ? AUDIO_EXT : VIDEO_EXT;
-  const found = scanFolder(res.filePaths[0], exts);
-  found.forEach((p) => addToPlaylist(type, p));
-  return { paths: found };
+
+  // On scanne TOUJOURS vidéo + audio ensemble : un dossier de musique doit
+  // être détecté même si la playlist "active" côté interface est la vidéo.
+  const found = scanFolder(res.filePaths[0], ALL_MEDIA_EXT);
+  const video = [], audio = [];
+  found.forEach((p) => {
+    const t = mediaTypeForExt(p);
+    if (!t) return;
+    addToPlaylist(t, p);
+    (t === "audio" ? audio : video).push(p);
+  });
+  return { video, audio };
 });
 
-ipcMain.handle("media:add-paths", (_e, { type, paths }) => {
-  const added = [];
+ipcMain.handle("media:add-paths", (_e, { paths }) => {
+  const video = [], audio = [];
   for (const p of paths) {
     let stat;
     try { stat = fs.statSync(p); } catch { continue; }
     if (stat.isDirectory()) {
-      const exts = type === "audio" ? AUDIO_EXT : VIDEO_EXT;
-      scanFolder(p, exts).forEach((f) => { addToPlaylist(type, f); added.push(f); });
+      scanFolder(p, ALL_MEDIA_EXT).forEach((f) => {
+        const t = mediaTypeForExt(f);
+        if (!t) return;
+        addToPlaylist(t, f);
+        (t === "audio" ? audio : video).push(f);
+      });
     } else {
-      addToPlaylist(type, p);
-      added.push(p);
+      const t = mediaTypeForExt(p);
+      if (!t) continue;
+      addToPlaylist(t, p);
+      (t === "audio" ? audio : video).push(p);
     }
   }
-  return { added, playlist: store.media[playlistKey(type)] };
+  return { video, audio, videoPlaylist: store.media.videoPlaylist, audioPlaylist: store.media.audioPlaylist };
+
 });
 
 ipcMain.handle("media:remove-from-playlist", (_e, { type, id }) => {
@@ -798,6 +892,69 @@ ipcMain.handle("shell:show-in-folder", (_e, filePath) => { shell.showItemInFolde
 ipcMain.handle("shell:open-external", (_e, url) => { shell.openExternal(url); return true; });
 
 // ------------------------------------------------------------
+// Menu contextuel de l'Explorateur Windows : "Ajouter à Media Player".
+// Ajoute, pour chaque extension média reconnue, une clé de registre sous
+// HKEY_CURRENT_USER\Software\Classes\SystemFileAssociations\.ext\shell\...
+// (aucun droit administrateur requis, contrairement à HKEY_CLASSES_ROOT).
+// MultiSelectModel=Player permet à Explorer d'invoquer une seule fois la
+// commande avec tous les fichiers sélectionnés, plutôt qu'un process par
+// fichier.
+// ------------------------------------------------------------
+const EXPLORER_VERB = "CentralMediaAddToPlaylist";
+
+function regKeyFor(ext) {
+  return `HKCU\\Software\\Classes\\SystemFileAssociations\\.${ext}\\shell\\${EXPLORER_VERB}`;
+}
+
+function runReg(args) {
+  return new Promise((resolve) => {
+    const proc = spawn("reg.exe", args, { windowsHide: true });
+    let stderr = "";
+    proc.stderr.on("data", (d) => { stderr += d.toString(); });
+    proc.on("error", () => resolve({ ok: false, message: "reg.exe introuvable (Windows uniquement)." }));
+    proc.on("close", (code) => resolve({ ok: code === 0, message: code === 0 ? null : stderr.trim() }));
+  });
+}
+
+async function enableExplorerIntegration() {
+  if (process.platform !== "win32") return { ok: false, message: "Fonctionnalité disponible uniquement sur Windows." };
+  const exePath = app.isPackaged ? process.execPath : process.execPath; // en dev : electron.exe (utile pour tester le principe)
+  const label = "Ajouter à Central Media Player";
+  const iconPath = exePath;
+
+  const results = await Promise.all(ALL_MEDIA_EXT.map(async (ext) => {
+    const key = regKeyFor(ext);
+    const r1 = await runReg(["add", key, "/ve", "/d", label, "/f"]);
+    const r2 = await runReg(["add", key, "/v", "Icon", "/d", `"${iconPath}",0`, "/f"]);
+    const r3 = await runReg(["add", key, "/v", "MultiSelectModel", "/d", "Player", "/f"]);
+    const cmd = app.isPackaged
+      ? `"${exePath}" "--add-to-playlist" "%1"`
+      : `"${exePath}" "${path.join(__dirname, "main.js")}" "--add-to-playlist" "%1"`;
+    const r4 = await runReg(["add", key + "\\command", "/ve", "/d", cmd, "/f"]);
+    return [r1, r2, r3, r4].every((r) => r.ok);
+  }));
+
+  const ok = results.every(Boolean);
+  if (ok) { store.settings.explorerIntegration = true; persistStore(); }
+  return { ok, message: ok ? null : "Certaines clés de registre n'ont pas pu être créées." };
+}
+
+async function disableExplorerIntegration() {
+  if (process.platform !== "win32") return { ok: false, message: "Fonctionnalité disponible uniquement sur Windows." };
+  await Promise.all(ALL_MEDIA_EXT.map((ext) => runReg(["delete", regKeyFor(ext), "/f"])));
+  store.settings.explorerIntegration = false;
+  persistStore();
+  return { ok: true };
+}
+
+ipcMain.handle("explorer:get-status", () => ({
+  supported: process.platform === "win32",
+  enabled: !!store.settings.explorerIntegration,
+}));
+ipcMain.handle("explorer:enable", () => enableExplorerIntegration());
+ipcMain.handle("explorer:disable", () => disableExplorerIntegration());
+
+// ------------------------------------------------------------
 // Cycle de vie de l'application
 // ------------------------------------------------------------
 app.whenReady().then(() => {
@@ -810,6 +967,11 @@ app.whenReady().then(() => {
       getState: () => remote.lastState,
     }).catch(() => {});
   }
+
+  // Démarrage "à froid" via le menu contextuel Windows : les chemins
+  // arrivent dans process.argv. On laisse le temps à la fenêtre/au
+  // renderer de charger avant de les pousser.
+  setTimeout(() => handleIncomingArgv(process.argv), 1200);
 });
 
 app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });

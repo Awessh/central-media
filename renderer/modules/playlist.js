@@ -6,6 +6,13 @@ App.playlist = (() => {
 
   function currentList() { return state.activePlaylistType === "audio" ? state.library.audioPlaylist : state.library.videoPlaylist; }
 
+  function switchType(type) {
+    if (state.activePlaylistType === type) return;
+    state.activePlaylistType = type;
+    document.querySelectorAll(".pl-type-btn").forEach((b) => b.classList.toggle("active", b.dataset.type === type));
+    render();
+  }
+
   function thumbHtml(item) {
     if (item.thumbnail) return `<img class="thumb" src="${item.thumbnail}">`;
     return `<div class="thumb-placeholder"><i class="fa-solid ${state.activePlaylistType === "audio" ? "fa-music" : "fa-film"}"></i></div>`;
@@ -56,13 +63,26 @@ App.playlist = (() => {
   }
 
   async function addFiles() {
-    const res = await api.chooseMediaFile(state.activePlaylistType);
-    if (res && res.paths && res.paths.length) { await App.library.refreshAndRender(); }
+    const res = await api.chooseMediaFile();
+    if (!res) return;
+    const hasVideo = res.video && res.video.length;
+    const hasAudio = res.audio && res.audio.length;
+    if (!hasVideo && !hasAudio) return;
+    await App.library.refreshAndRender();
+    if (state.activePlaylistType === "audio" && !hasAudio && hasVideo) switchType("video");
+    else if (state.activePlaylistType === "video" && !hasVideo && hasAudio) switchType("audio");
   }
 
   async function addFolder() {
-    const res = await api.chooseMediaFolder(state.activePlaylistType);
-    if (res && res.paths && res.paths.length) { await App.library.refreshAndRender(); }
+    const res = await api.chooseMediaFolder();
+    if (!res) return;
+    const hasVideo = res.video && res.video.length;
+    const hasAudio = res.audio && res.audio.length;
+    if (!hasVideo && !hasAudio) { util.toast("Aucun média trouvé dans ce dossier."); return; }
+    await App.library.refreshAndRender();
+    if (state.activePlaylistType === "audio" && !hasAudio && hasVideo) switchType("video");
+    else if (state.activePlaylistType === "video" && !hasVideo && hasAudio) switchType("audio");
+    util.toast(`Dossier importé : ${res.video.length} vidéo(s), ${res.audio.length} morceau(x) audio.`);
   }
 
   async function clearAll() {
@@ -76,9 +96,14 @@ App.playlist = (() => {
     if (!res) return;
     if (res.error) { util.toast("Import impossible : " + res.message); return; }
     const paths = res.items.map((it) => it.path);
-    const addRes = await api.addMediaPaths(state.activePlaylistType, paths);
+    const addRes = await api.addMediaPaths(paths);
     await App.library.refreshAndRender();
-    if (addRes.added && addRes.added.length) App.player.playPath(addRes.added[0]);
+    const hasVideo = addRes.video && addRes.video.length;
+    const hasAudio = addRes.audio && addRes.audio.length;
+    if (state.activePlaylistType === "audio" && !hasAudio && hasVideo) switchType("video");
+    else if (state.activePlaylistType === "video" && !hasVideo && hasAudio) switchType("audio");
+    if (hasVideo) App.player.playPath(addRes.video[0]);
+    else if (hasAudio) App.player.playPath(addRes.audio[0]);
     util.toast(`Playlist "${res.name}" importée (${res.items.length} éléments).`);
   }
 
@@ -89,13 +114,30 @@ App.playlist = (() => {
     if (res && res.path) util.toast("Playlist exportée : " + res.path);
   }
 
+  // Ajout depuis l'extérieur : menu contextuel Windows "Ajouter à Central
+  // Media Player" (fichier fermé/app fermée) ou glisser sur l'icône.
+  function bindExternalAdditions() {
+    api.onMediaAddedExternally(async ({ video, audio }) => {
+      await App.library.refreshAndRender();
+      const parts = [];
+      if (video && video.length) parts.push(`${video.length} vidéo(s)`);
+      if (audio && audio.length) parts.push(`${audio.length} morceau(x)`);
+      util.toast(`Ajouté depuis l'Explorateur Windows : ${parts.join(", ")}.`);
+      if (audio && audio.length && !video?.length) switchType("audio");
+      else if (video && video.length && !audio?.length) switchType("video");
+    });
+  }
+
   function bind() {
+    document.querySelectorAll(".pl-type-btn").forEach((btn) => { btn.onclick = () => switchType(btn.dataset.type); });
     document.getElementById("addFiles").onclick = addFiles;
     document.getElementById("loadFolder").onclick = addFolder;
     document.getElementById("clearPlaylist").onclick = clearAll;
     document.getElementById("loadPlaylistFile").onclick = loadFromFile;
     document.getElementById("savePlaylistFile").onclick = saveToFile;
+    bindExternalAdditions();
   }
 
-  return { render, bind, currentList };
+  return { render, bind, currentList, switchType };
 })();
+

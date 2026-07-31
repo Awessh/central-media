@@ -2,21 +2,22 @@
 // Mises à jour automatiques (electron-updater)
 // ============================================================
 // Le dépôt de Releases ("centralpdf") est PRIVÉ : l'API GitHub exige une
-// authentification pour lister/télécharger ses Releases. Ce jeton est donc
-// embarqué dans l'app distribuée — c'est la seule solution pour un dépôt
-// privé consulté par des utilisateurs externes, en sachant qu'un jeton
-// livré dans une appli peut toujours être extrait (le .asar n'est pas un
-// vrai coffre-fort).
-// SÉCURITÉ : utilise IMPÉRATIVEMENT un jeton "fine-grained" GitHub
-// (Settings -> Developer settings -> Fine-grained tokens) limité à :
+// authentification pour lister/télécharger ses Releases.
+//
+// SÉCURITÉ : le jeton ne doit JAMAIS être écrit en dur dans ce fichier
+// (ou n'importe quel autre fichier versionné). Il doit être fourni via la
+// variable d'environnement GH_TOKEN au moment où l'app tourne. Utilise
+// IMPÉRATIVEMENT un jeton "fine-grained" GitHub (Settings -> Developer
+// settings -> Fine-grained tokens) limité à :
 //   - CE dépôt uniquement ("centralpdf", pas "tous les dépôts")
 //   - Permission "Contents" en LECTURE SEULE, rien d'autre
-// Ne jamais réutiliser ici un jeton ayant des droits plus larges (écriture,
-// autres dépôts...) — celui utilisé pour PUBLIER les Releases (GH_TOKEN au
-// moment du build) doit rester un jeton différent, jamais mis dans ce fichier.
+// Voir README.md pour comment fournir GH_TOKEN en dev et en build.
 function ensureUpdateToken() {
   if (!process.env.GH_TOKEN) {
-    process.env.GH_TOKEN = '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';
+    console.warn(
+      "[updater] GH_TOKEN non défini : la vérification de mise à jour sur le dépôt privé échouera. "
+      + "Définis la variable d'environnement GH_TOKEN avant de lancer/packager l'app (voir README.md)."
+    );
   }
 }
 

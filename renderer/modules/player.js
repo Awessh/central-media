@@ -133,19 +133,35 @@ App.player = (() => {
   // ------------------------------------------------------------
   // Ouverture (fichier / dossier / URL)
   // ------------------------------------------------------------
-  async function chooseAndPlay(type) {
-    const res = await api.chooseMediaFile(type || App.state.activePlaylistType);
+  async function chooseAndPlay() {
+    const res = await api.chooseMediaFile();
     if (!res || !res.paths || !res.paths.length) return;
     await App.library.refreshAndRender();
-    await playPath(res.paths[0], { mediaType: type });
+    const firstVideo = res.video && res.video[0];
+    const firstAudio = res.audio && res.audio[0];
+    if (firstVideo) { App.playlist.switchType("video"); await playPath(firstVideo); }
+    else if (firstAudio) { App.playlist.switchType("audio"); await playPath(firstAudio); }
   }
 
-  async function chooseAndPlayFolder(type) {
-    const res = await api.chooseMediaFolder(type || App.state.activePlaylistType);
+  async function chooseAndPlayFolder() {
+    const res = await api.chooseMediaFolder();
     if (res === null) return;
-    if (!res.paths || !res.paths.length) { util.toast("Aucun média trouvé dans ce dossier."); return; }
+    const hasVideo = res.video && res.video.length;
+    const hasAudio = res.audio && res.audio.length;
+    if (!hasVideo && !hasAudio) { util.toast("Aucun média trouvé dans ce dossier."); return; }
     await App.library.refreshAndRender();
-    if (!state.currentPath) await playPath(res.paths[0], { mediaType: type });
+
+    // Bascule vers l'onglet correspondant au contenu trouvé (priorité au
+    // type déjà actif s'il a des résultats, sinon celui qui en a).
+    if (state.activePlaylistType === "audio" && !hasAudio) App.playlist.switchType("video");
+    else if (state.activePlaylistType === "video" && !hasVideo) App.playlist.switchType("audio");
+
+    if (!state.currentPath) {
+      if (state.activePlaylistType === "audio" && hasAudio) await playPath(res.audio[0]);
+      else if (hasVideo) await playPath(res.video[0]);
+      else if (hasAudio) await playPath(res.audio[0]);
+    }
+    util.toast(`Dossier importé : ${res.video.length} vidéo(s), ${res.audio.length} morceau(x) audio.`);
   }
 
   function openUrlPrompt() {
@@ -309,7 +325,7 @@ App.player = (() => {
     setInterval(() => { const el = App.activeEl(); if (!el.paused) persistPosition(); }, 5000);
     window.addEventListener("beforeunload", persistPosition);
 
-    // Glisser-déposer
+    // Glisser-déposer (fichiers ET dossiers, vidéo ou audio mélangés)
     document.addEventListener("dragover", (e) => e.preventDefault());
     document.addEventListener("drop", async (e) => {
       e.preventDefault();
@@ -317,11 +333,23 @@ App.player = (() => {
       if (!files.length) return;
       const paths = files.map((f) => f.path).filter(Boolean);
       if (!paths.length) return;
-      const res = await api.addMediaPaths(state.activePlaylistType, paths);
-      if (!res || !res.added || !res.added.length) return;
-      state.library[state.activePlaylistType === "audio" ? "audioPlaylist" : "videoPlaylist"] = res.playlist;
-      App.playlist.render();
-      playPath(res.added[0]);
+
+      const res = await api.addMediaPaths(paths);
+      if (!res) return;
+      state.library.videoPlaylist = res.videoPlaylist;
+      state.library.audioPlaylist = res.audioPlaylist;
+
+      const hasVideo = res.video && res.video.length;
+      const hasAudio = res.audio && res.audio.length;
+      if (!hasVideo && !hasAudio) { util.toast("Aucun média reconnu dans les éléments déposés."); return; }
+
+      if (state.activePlaylistType === "audio" && !hasAudio) App.playlist.switchType("video");
+      else if (state.activePlaylistType === "video" && !hasVideo) App.playlist.switchType("audio");
+      else App.playlist.render();
+
+      if (state.activePlaylistType === "audio" && hasAudio) playPath(res.audio[0]);
+      else if (hasVideo) playPath(res.video[0]);
+      else if (hasAudio) playPath(res.audio[0]);
     });
   }
 
