@@ -1,27 +1,41 @@
 "use strict";
 
-// Petit serveur local (HTTP + WebSocket) permettant de contrôler le lecteur
-// depuis un smartphone sur le même réseau. Sert aussi une mini page web de
-// secours (playable dans un navigateur mobile) en attendant l'appli Android
-// dédiée. Protocole volontairement simple et documenté pour que l'appli
-// Android puisse s'y brancher directement.
+// Serveur local (HTTP + WebSocket) permettant de contrôler le lecteur depuis
+// l'appli Android "Central Media Remote", sur le même réseau WiFi, ou via le
+// QR code de pairage généré au démarrage (voir main.js).
 //
-// GET  /api/state              -> état courant du lecteur (JSON)
-// POST /api/command  {type,...}-> envoie une commande au lecteur
-// WS   /ws                     -> même chose en push temps réel
-//   Messages serveur -> client : { type: "state", state: {...} }
-//   Messages client -> serveur : { type: "command", command: {...} }
+// Sécurité : un token de pairage est généré à chaque démarrage du serveur.
+// Le QR code encode { ip, port, token, name }. Toutes les routes /api/*
+// (sauf /api/ping) exigent l'en-tête "X-Pair-Token" avec ce token.
+//
+// Routes HTTP :
+//   GET  /api/ping                -> { ok, name }                (pas de token requis, sert à tester une IP saisie à la main)
+//   GET  /api/state               -> état courant du lecteur
+//   POST /api/command   {type,...}-> envoie une commande (voir handleCommand côté renderer)
+//   GET  /api/library?type=video|audio -> playlist en cours (fichiers ajoutés au lecteur)
+//   GET  /api/playlists            -> playlists nommées sauvegardées dans le lecteur
+//   GET  /api/browse?path=...      -> parcourt le système de fichiers du PC (dossiers/fichiers lisibles)
+//   POST /api/upload   (multipart, champ "file") -> envoie un fichier du téléphone pour lecture immédiate sur le PC
+// WS   /ws  (?token=...)          -> même chose en push temps réel
+//   Serveur -> client : { type: "state", state }
+//   Client  -> serveur: { type: "command", command }
 
 const http = require("http");
+const path = require("path");
+const fs = require("fs");
+const os = require("os");
+const crypto = require("crypto");
 const express = require("express");
 const { WebSocketServer } = require("ws");
-const os = require("os");
+const multer = require("multer");
 
 let server = null;
 let wss = null;
 let currentPort = null;
 let onCommand = null;
+let getContext = null; // () => { library, playlists, browse(p), onUpload(filePath, mediaType) }
 let lastState = { status: "idle" };
+let pairToken = null;
 
 function localIPv4() {
   const nets = os.networkInterfaces();
@@ -33,12 +47,75 @@ function localIPv4() {
   return "127.0.0.1";
 }
 
+function checkToken(req, res, next) {
+  const token = req.header("X-Pair-Token") || req.query.token;
+  if (!pairToken || token !== pairToken) return res.status(401).json({ error: "unauthorized" });
+  next();
+}
+
+// Parcours du système de fichiers du PC, restreint aux répertoires lisibles.
+// Sous Windows, un chemin vide renvoie la liste des lecteurs (C:\, D:\, ...).
+function browseFs(reqPath) {
+  const exts = /\.(mp4|mkv|avi|mov|webm|flv|wmv|mp3|wav|flac|aac|ogg|m4a|m3u8?|pls|xspf)$/i;
+
+  if (!reqPath) {
+    if (os.platform() === "win32") {
+      const drives = [];
+      for (let c = 65; c <= 90; c++) {
+        const letter = String.fromCharCode(c) + ":\\";
+        try { if (fs.existsSync(letter)) drives.push({ name: letter, path: letter, isDir: true }); } catch {}
+      }
+      return { path: "", parent: null, entries: drives };
+    }
+    reqPath = "/";
+  }
+
+  const abs = path.resolve(reqPath);
+  const stat = fs.statSync(abs);
+  if (!stat.isDirectory()) throw new Error("not-a-directory");
+
+  const rawEntries = fs.readdirSync(abs, { withFileTypes: true });
+  const entries = [];
+  for (const d of rawEntries) {
+    if (d.name.startsWith(".") || d.name === "$RECYCLE.BIN" || d.name === "System Volume Information") continue;
+    const full = path.join(abs, d.name);
+    if (d.isDirectory()) {
+      entries.push({ name: d.name, path: full, isDir: true });
+    } else if (exts.test(d.name)) {
+      let size = 0;
+      try { size = fs.statSync(full).size; } catch {}
+      entries.push({ name: d.name, path: full, isDir: false, size });
+    }
+  }
+  entries.sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1));
+
+  const parent = path.dirname(abs) === abs ? null : path.dirname(abs);
+  return { path: abs, parent, entries };
+}
+
 async function start(port, opts = {}) {
   if (server) return getStatus();
 
   onCommand = opts.onCommand || null;
+  getContext = opts.getContext || (() => ({}));
+  pairToken = crypto.randomBytes(16).toString("hex");
+
+  const uploadDir = opts.uploadDir || path.join(os.tmpdir(), "central-media-incoming");
+  try { fs.mkdirSync(uploadDir, { recursive: true }); } catch {}
+  const upload = multer({
+    storage: multer.diskStorage({
+      destination: (_req, _file, cb) => cb(null, uploadDir),
+      filename: (_req, file, cb) => cb(null, Date.now() + "_" + file.originalname.replace(/[^\w.\-]+/g, "_")),
+    }),
+    limits: { fileSize: 8 * 1024 * 1024 * 1024 }, // 8 Go, LAN uniquement
+  });
+
   const app = express();
   app.use(express.json());
+
+  app.get("/api/ping", (_req, res) => res.json({ ok: true, name: "Central Media" }));
+
+  app.use("/api", (req, res, next) => (req.path === "/ping" ? next() : checkToken(req, res, next)));
 
   app.get("/api/state", (_req, res) => res.json(lastState));
 
@@ -47,14 +124,41 @@ async function start(port, opts = {}) {
     res.json({ ok: true });
   });
 
-  app.get("/remote", (_req, res) => {
-    res.type("html").send(REMOTE_PAGE_HTML);
+  app.get("/api/library", (req, res) => {
+    const ctx = getContext();
+    const type = req.query.type === "audio" ? "audio" : "video";
+    res.json(ctx.library ? ctx.library(type) : []);
   });
+
+  app.get("/api/playlists", (_req, res) => {
+    const ctx = getContext();
+    res.json(ctx.playlists ? ctx.playlists() : []);
+  });
+
+  app.get("/api/browse", (req, res) => {
+    try {
+      res.json(browseFs(req.query.path || ""));
+    } catch (e) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/upload", upload.single("file"), (req, res) => {
+    if (!req.file) return res.status(400).json({ error: "no-file" });
+    const mediaType = req.body.mediaType === "audio" ? "audio" : "video";
+    const ctx = getContext();
+    if (ctx.onUpload) ctx.onUpload(req.file.path, mediaType);
+    res.json({ ok: true, path: req.file.path });
+  });
+
+  app.get("/remote", (_req, res) => res.type("html").send(REMOTE_PAGE_HTML));
 
   server = http.createServer(app);
   wss = new WebSocketServer({ server, path: "/ws" });
 
-  wss.on("connection", (ws) => {
+  wss.on("connection", (ws, req) => {
+    const url = new URL(req.url, "http://x");
+    if (url.searchParams.get("token") !== pairToken) { ws.close(1008, "unauthorized"); return; }
     ws.send(JSON.stringify({ type: "state", state: lastState }));
     ws.on("message", (raw) => {
       try {
@@ -77,6 +181,7 @@ async function stop() {
   if (wss) { wss.clients.forEach((c) => c.close()); wss.close(); wss = null; }
   if (server) { await new Promise((resolve) => server.close(resolve)); server = null; }
   currentPort = null;
+  pairToken = null;
 }
 
 function pushState(state) {
@@ -93,8 +198,12 @@ function getStatus() {
     running: true,
     port: currentPort,
     ip,
+    token: pairToken,
     url: `http://${ip}:${currentPort}/remote`,
-    wsUrl: `ws://${ip}:${currentPort}/ws`,
+    wsUrl: `ws://${ip}:${currentPort}/ws?token=${pairToken}`,
+    // Payload complet encodé dans le QR code : tout ce qu'il faut pour se
+    // connecter en un scan, sans ressaisir l'IP ni le token.
+    pairPayload: JSON.stringify({ v: 1, name: "Central Media", ip, port: currentPort, token: pairToken }),
   };
 }
 
@@ -112,13 +221,14 @@ const REMOTE_PAGE_HTML = `<!DOCTYPE html>
   #now{opacity:.7;font-size:14px;text-align:center}
 </style></head>
 <body>
-  <h1>Télécommande</h1>
-  <div id="now">En attente…</div>
+  <h1>Télécommande (page de secours)</h1>
+  <div id="now">Utilisez plutôt l'appli Android Central Media Remote pour toutes les fonctionnalités.</div>
   <div class="row"><button data-c="prev">⏮</button><button data-c="play-pause">⏯</button><button data-c="next">⏭</button></div>
   <div class="row"><button data-c="back10">-10s</button><button data-c="forward10">+10s</button></div>
   <div class="row"><button data-c="vol-down">🔉</button><button data-c="mute">🔇</button><button data-c="vol-up">🔊</button></div>
 <script>
-  const ws = new WebSocket("ws://" + location.host + "/ws");
+  const token = new URLSearchParams(location.search).get("token") || "";
+  const ws = new WebSocket("ws://" + location.host + "/ws?token=" + token);
   ws.onmessage = (e) => {
     const msg = JSON.parse(e.data);
     if (msg.type === "state") document.getElementById("now").textContent = msg.state.title || "En attente…";

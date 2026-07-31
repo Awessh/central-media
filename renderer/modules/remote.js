@@ -18,6 +18,7 @@ App.remote = (() => {
       currentTime: el.currentTime,
       duration: el.duration || 0,
       volume: el.volume,
+      brightness: state.filters.brightness,
     });
   }
 
@@ -33,6 +34,15 @@ App.remote = (() => {
       case "vol-up": dom.volume.value = Math.min(100, Number(dom.volume.value) + 5); dom.volume.oninput(); break;
       case "vol-down": dom.volume.value = Math.max(0, Number(dom.volume.value) - 5); dom.volume.oninput(); break;
       case "seek": if (typeof cmd.value === "number") App.activeEl().currentTime = cmd.value; break;
+      case "seek-by": if (typeof cmd.seconds === "number") App.player.seekBy(cmd.seconds); break;
+      case "brightness-up": App.filters.set("brightness", Math.min(200, App.state.filters.brightness + 10)); break;
+      case "brightness-down": App.filters.set("brightness", Math.max(0, App.state.filters.brightness - 10)); break;
+      case "brightness-set": if (typeof cmd.value === "number") App.filters.set("brightness", Math.max(0, Math.min(200, cmd.value))); break;
+      case "play-item":
+        // Fichier choisi depuis la télécommande (bibliothèque du PC, playlist
+        // nommée, ou fichier envoyé/uploadé depuis le téléphone).
+        if (cmd.path) App.player.playPath(cmd.path, { mediaType: cmd.mediaType || "video" });
+        break;
     }
     pushState();
   }

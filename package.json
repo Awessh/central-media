@@ -1,6 +1,6 @@
 {
   "name": "central-media",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Lecteur vidéo & audio autonome (streaming, playlists, sous-titres, télécommande...)",
   "main": "main.js",
   "author": "Awesshhh",
@@ -24,6 +24,7 @@
     "dashjs": "^4.7.4",
     "express": "^4.19.2",
     "ws": "^8.18.0",
+    "multer": "^1.4.5-lts.1",
     "qrcode": "^1.5.4"
   },
   "build": {

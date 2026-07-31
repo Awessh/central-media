@@ -603,30 +603,78 @@ function buildContextMenu(win, ctx) {
 // est fourni pour la config rapide en attendant.
 // ------------------------------------------------------------
 const remote = require("./server/remote-server.js");
+const remoteBt = require("./server/bluetooth-server.js");
+
+// Commandes reçues du téléphone qui n'ont pas besoin de repasser par le
+// renderer (elles concernent le process principal directement).
+function handleRemoteCommand(cmd) {
+  if (!cmd || !cmd.type) return;
+  if (cmd.type === "close-player") {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
+    return;
+  }
+  if (cmd.type === "play-item") {
+    // { path, mediaType }
+    addToPlaylist(cmd.mediaType || "video", cmd.path);
+    broadcast("remote:command", cmd);
+    return;
+  }
+  if (cmd.type === "play-playlist") {
+    const pl = store.media.playlists.find((p) => p.id === cmd.id);
+    if (pl && pl.items.length) {
+      pl.items.forEach((p) => addToPlaylist(pl.type, p));
+      broadcast("remote:command", { type: "play-item", path: pl.items[0], mediaType: pl.type });
+    }
+    return;
+  }
+  // Tout le reste (volume, next/prev, seek, luminosité, play-pause...) est
+  // géré côté renderer, qui a directement la main sur l'élément <video>/<audio>.
+  broadcast("remote:command", cmd);
+}
+
+// Contexte fourni au serveur HTTP pour les routes de lecture à distance.
+function remoteContext() {
+  return {
+    library: (type) => store.media[playlistKey(type)],
+    playlists: () => store.media.playlists,
+    onUpload: (filePath, mediaType) => {
+      addToPlaylist(mediaType, filePath);
+      broadcast("remote:command", { type: "play-item", path: filePath, mediaType });
+    },
+  };
+}
 
 ipcMain.handle("remote:start", async () => {
   store.settings.remoteControl.enabled = true;
   persistStore();
   const info = await remote.start(store.settings.remoteControl.port, {
-    onCommand: (cmd) => broadcast("remote:command", cmd),
-    getState: () => remote.lastState,
+    onCommand: handleRemoteCommand,
+    getContext: remoteContext,
   });
   if (info.running) {
     try {
       const QRCode = require("qrcode");
-      info.qrDataUrl = await QRCode.toDataURL(info.url, { margin: 1, width: 220 });
+      // Le QR encode le payload complet de pairage (ip+port+token), pas
+      // juste l'URL, pour que le scan côté Android configure tout d'un coup.
+      info.qrDataUrl = await QRCode.toDataURL(info.pairPayload, { margin: 1, width: 260 });
     } catch { info.qrDataUrl = null; }
   }
+  // Bluetooth : best-effort, ne bloque jamais le démarrage du WiFi/QR.
+  const btInfo = await remoteBt.start({ onCommand: handleRemoteCommand });
+  info.bluetooth = btInfo.running
+    ? { available: true }
+    : { available: false, reason: btInfo.reason || remoteBt.getStatusReason() };
   return info;
 });
 ipcMain.handle("remote:stop", async () => {
   store.settings.remoteControl.enabled = false;
   persistStore();
   await remote.stop();
+  await remoteBt.stop();
   return true;
 });
-ipcMain.handle("remote:push-state", (_e, state) => { remote.pushState(state); return true; });
-ipcMain.handle("remote:get-status", () => remote.getStatus());
+ipcMain.handle("remote:push-state", (_e, state) => { remote.pushState(state); remoteBt.pushState(state); return true; });
+ipcMain.handle("remote:get-status", () => ({ ...remote.getStatus(), bluetoothAvailable: remoteBt.isAvailable() }));
 
 // ------------------------------------------------------------
 // IPC — dialogues fichiers / dossiers
