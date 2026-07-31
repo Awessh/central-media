@@ -1,6 +1,6 @@
 {
   "name": "central-media",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Lecteur vidéo & audio autonome (streaming, playlists, sous-titres, télécommande...)",
   "main": "main.js",
   "author": "Awesshhh",
@@ -38,8 +38,7 @@
         "provider": "github",
         "owner": "Awessh",
         "repo": "central-media",
-        "releaseType": "release",
-        "private": true
+        "releaseType": "release"
       }
     ],
     "asarUnpack": [
@@ -50,7 +49,6 @@
       "main.js",
       "preload.js",
       "index.html",
-      ".env",
       "renderer/**",
       "server/**",
       "assets/**",

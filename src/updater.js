@@ -1,25 +1,15 @@
 // ============================================================
 // Mises à jour automatiques (electron-updater)
 // ============================================================
-// Le dépôt de Releases ("centralpdf") est PRIVÉ : l'API GitHub exige une
-// authentification pour lister/télécharger ses Releases.
+// Le dépôt de Releases est PUBLIC : la vérification/téléchargement des
+// mises à jour ne nécessite plus aucun jeton à l'exécution (le flux
+// /releases.atom de GitHub fonctionne sans authentification pour un
+// dépôt public — c'est le chemin "normal" et fiable d'electron-updater).
 //
-// SÉCURITÉ : le jeton ne doit JAMAIS être écrit en dur dans ce fichier
-// (ou n'importe quel autre fichier versionné). Il doit être fourni via la
-// variable d'environnement GH_TOKEN au moment où l'app tourne. Utilise
-// IMPÉRATIVEMENT un jeton "fine-grained" GitHub (Settings -> Developer
-// settings -> Fine-grained tokens) limité à :
-//   - CE dépôt uniquement ("centralpdf", pas "tous les dépôts")
-//   - Permission "Contents" en LECTURE SEULE, rien d'autre
-// Voir README.md pour comment fournir GH_TOKEN en dev et en build.
-function ensureUpdateToken() {
-  if (!process.env.GH_TOKEN) {
-    console.warn(
-      "[updater] GH_TOKEN non défini : la vérification de mise à jour sur le dépôt privé échouera. "
-      + "Définis la variable d'environnement GH_TOKEN avant de lancer/packager l'app (voir README.md)."
-    );
-  }
-}
+// GH_TOKEN reste utile UNIQUEMENT côté machine de build/CI, pour que
+// `electron-builder --publish` puisse uploader les binaires vers GitHub
+// Releases (ça nécessite un droit d'écriture, distinct de la simple
+// lecture faite par l'app installée). Voir .env.example / README.md.
 
 let autoUpdater = null;
 let loadError = null;
@@ -52,7 +42,6 @@ function initUpdater({ app, ipcMain, dialog, BrowserWindow }) {
       setStatus('unsupported', { info: { reason: 'module-missing', message: String(loadError?.message || loadError || '') } });
       return status;
     }
-    ensureUpdateToken();
     setStatus('checking');
     autoUpdater.checkForUpdates().catch((err) => {
       setStatus('error', { info: { message: String(err?.message || err) } });
