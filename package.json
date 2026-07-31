@@ -1,6 +1,6 @@
 {
   "name": "central-media",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Lecteur vidéo & audio autonome (streaming, playlists, sous-titres, télécommande...)",
   "main": "main.js",
   "author": "Awesshhh",
@@ -50,6 +50,7 @@
       "main.js",
       "preload.js",
       "index.html",
+      ".env",
       "renderer/**",
       "server/**",
       "assets/**",
