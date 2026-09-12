@@ -617,6 +617,7 @@ function handleRemoteCommand(cmd) {
     // { path, mediaType }
     addToPlaylist(cmd.mediaType || "video", cmd.path);
     broadcast("remote:command", cmd);
+    pushPlaylistsToPhones();
     return;
   }
   if (cmd.type === "play-playlist") {
@@ -624,12 +625,93 @@ function handleRemoteCommand(cmd) {
     if (pl && pl.items.length) {
       pl.items.forEach((p) => addToPlaylist(pl.type, p));
       broadcast("remote:command", { type: "play-item", path: pl.items[0], mediaType: pl.type });
+      pushPlaylistsToPhones();
     }
     return;
   }
-  // Tout le reste (volume, next/prev, seek, luminosité, play-pause...) est
-  // géré côté renderer, qui a directement la main sur l'élément <video>/<audio>.
+  // Mutations de playlist declenchees a distance depuis le telephone
+  // (ecran Playlist). store.media vit dans le process principal, donc
+  // on mutualise directement la meme logique que les handlers IPC
+  // media:remove-from-playlist / media:reorder-playlist /
+  // media:clear-playlist utilises par l'UI locale, puis on notifie a
+  // la fois le renderer (pour rafraichir l'UI si la fenetre est ouverte
+  // sur la playlist) et les telephones connectes.
+  if (cmd.type === "remove-item") {
+    // { type, id }
+    const key = playlistKey(cmd.type || "video");
+    store.media[key] = store.media[key].filter((it) => it.id !== cmd.id);
+    persistStore();
+    broadcast("media:library-changed");
+    pushPlaylistsToPhones();
+    return;
+  }
+  if (cmd.type === "reorder-item") {
+    // { type, orderedIds }
+    const key = playlistKey(cmd.type || "video");
+    const byId = new Map(store.media[key].map((it) => [it.id, it]));
+    store.media[key] = (cmd.orderedIds || []).map((id) => byId.get(id)).filter(Boolean);
+    persistStore();
+    broadcast("media:library-changed");
+    pushPlaylistsToPhones();
+    return;
+  }
+  if (cmd.type === "clear-playlist") {
+    // { type }
+    store.media[playlistKey(cmd.type || "video")] = [];
+    persistStore();
+    broadcast("media:library-changed");
+    pushPlaylistsToPhones();
+    return;
+  }
+  // Tout le reste (volume, next/prev, seek, luminosité, play-pause,
+  // stop, navigation, menu, plein écran...) est géré côté renderer, qui
+  // a directement la main sur l'élément <video>/<audio> et l'UI.
   broadcast("remote:command", cmd);
+}
+
+// Pousse l'etat courant de la playlist/mediatheque a tous les
+// telephones connectes (voir remote-server.js -> pushPlaylists).
+function pushPlaylistsToPhones() {
+  remote.pushPlaylists({
+    video: store.media.videoPlaylist,
+    audio: store.media.audioPlaylist,
+    playlists: store.media.playlists,
+  });
+}
+
+// Capture de la fenetre Central Media pour l'aperçu ecran a distance
+// (GET /api/screen/frame). Capture volontairement la fenetre plutot
+// que l'ecran entier : c'est exactement le contenu qui interesse
+// l'utilisateur ("voir le lecteur"), et ça evite toute permission de
+// capture d'ecran Windows supplementaire.
+//
+// Cache par niveau de qualite (250ms) : si plusieurs telephones
+// demandent une frame au meme moment, ou si le meme telephone poll plus
+// vite que prevu, on evite de relancer capturePage() (couteux) a
+// chaque requete.
+const FRAME_CACHE_TTL_MS = 250;
+const frameCache = { low: null, medium: null, high: null };
+const frameCacheAt = { low: 0, medium: 0, high: 0 };
+const QUALITY_PRESETS = {
+  low: { scale: 0.25, jpeg: 40 },
+  medium: { scale: 0.5, jpeg: 60 },
+  high: { scale: 0.75, jpeg: 75 },
+};
+
+async function captureFrame(quality) {
+  const preset = QUALITY_PRESETS[quality] || QUALITY_PRESETS.medium;
+  const now = Date.now();
+  if (frameCache[quality] && now - frameCacheAt[quality] < FRAME_CACHE_TTL_MS) {
+    return frameCache[quality];
+  }
+  if (!mainWindow || mainWindow.isDestroyed()) return null;
+  const image = await mainWindow.webContents.capturePage();
+  const { width } = image.getSize();
+  const resized = width > 0 ? image.resize({ width: Math.round(width * preset.scale) }) : image;
+  const buffer = resized.toJPEG(preset.jpeg);
+  frameCache[quality] = buffer;
+  frameCacheAt[quality] = now;
+  return buffer;
 }
 
 // Contexte fourni au serveur HTTP pour les routes de lecture à distance.
@@ -640,7 +722,9 @@ function remoteContext() {
     onUpload: (filePath, mediaType) => {
       addToPlaylist(mediaType, filePath);
       broadcast("remote:command", { type: "play-item", path: filePath, mediaType });
+      pushPlaylistsToPhones();
     },
+    captureFrame,
   };
 }
 

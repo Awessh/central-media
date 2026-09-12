@@ -128,6 +128,17 @@ App.playlist = (() => {
     });
   }
 
+  // Playlist modifiee depuis la télécommande mobile (suppression,
+  // réorganisation, vidage) : le process principal a déjà mis à jour
+  // store.media, on se contente de rafraîchir l'affichage local si
+  // c'est cette playlist qui est actuellement visible.
+  function bindRemoteMutations() {
+    api.onLibraryChangedRemotely(async () => {
+      await App.library.refreshAndRender();
+      render();
+    });
+  }
+
   function bind() {
     document.querySelectorAll(".pl-type-btn").forEach((btn) => { btn.onclick = () => switchType(btn.dataset.type); });
     document.getElementById("addFiles").onclick = addFiles;
@@ -136,6 +147,7 @@ App.playlist = (() => {
     document.getElementById("loadPlaylistFile").onclick = loadFromFile;
     document.getElementById("savePlaylistFile").onclick = saveToFile;
     bindExternalAdditions();
+    bindRemoteMutations();
   }
 
   return { render, bind, currentList, switchType };

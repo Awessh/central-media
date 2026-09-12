@@ -15,9 +15,12 @@
 //   GET  /api/library?type=video|audio -> playlist en cours (fichiers ajoutés au lecteur)
 //   GET  /api/playlists            -> playlists nommées sauvegardées dans le lecteur
 //   GET  /api/browse?path=...      -> parcourt le système de fichiers du PC (dossiers/fichiers lisibles)
+//   GET  /api/file?path=...        -> diffuse un fichier (lecture à distance sur le téléphone, avec support Range)
+//   GET  /api/screen/frame?quality=... -> derniere capture JPEG de la fenetre Central Media (aperçu ecran)
 //   POST /api/upload   (multipart, champ "file") -> envoie un fichier du téléphone pour lecture immédiate sur le PC
 // WS   /ws  (?token=...)          -> même chose en push temps réel
 //   Serveur -> client : { type: "state", state }
+//   Serveur -> client : { type: "playlist", video, audio, playlists } (après une mutation de playlist)
 //   Client  -> serveur: { type: "command", command }
 
 const http = require("http");
@@ -143,6 +146,42 @@ async function start(port, opts = {}) {
     }
   });
 
+  // GET /api/file?path=... -> diffuse un fichier deja visible via
+  // /api/browse, pour lecture a distance dans le Mobile Player du
+  // telephone (sens PC -> telephone de la lecture bidirectionnelle).
+  // Meme regex que browseFs() : on ne sert jamais un fichier qui ne
+  // serait pas deja un media reconnu par le reste de l'application.
+  app.get("/api/file", (req, res) => {
+    const filePath = req.query.path;
+    const exts = /\.(mp4|mkv|avi|mov|webm|flv|wmv|mp3|wav|flac|aac|ogg|m4a)$/i;
+    if (!filePath || !exts.test(filePath)) {
+      return res.status(400).json({ error: "invalid-path" });
+    }
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "not-found" });
+    }
+    // res.sendFile gere nativement les en-tetes Range (necessaire pour
+    // que le lecteur mobile puisse avancer/reculer sans tout
+    // retelecharger) via le module "send" utilise en interne par Express.
+    res.sendFile(path.resolve(filePath));
+  });
+
+  // GET /api/screen/frame?quality=low|medium|high -> derniere capture de
+  // la fenetre Central Media, en JPEG (voir captureFrame() dans main.js
+  // pour la resolution/qualite par niveau et le cache court-terme).
+  app.get("/api/screen/frame", async (req, res) => {
+    const quality = ["low", "medium", "high"].includes(req.query.quality) ? req.query.quality : "medium";
+    try {
+      const ctx = getContext();
+      if (!ctx.captureFrame) return res.status(501).json({ error: "not-supported" });
+      const buffer = await ctx.captureFrame(quality);
+      if (!buffer) return res.status(503).json({ error: "capture-unavailable" });
+      res.type("image/jpeg").send(buffer);
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.post("/api/upload", upload.single("file"), (req, res) => {
     if (!req.file) return res.status(400).json({ error: "no-file" });
     const mediaType = req.body.mediaType === "audio" ? "audio" : "video";
@@ -189,6 +228,16 @@ function pushState(state) {
   if (!wss) return;
   const payload = JSON.stringify({ type: "state", state });
   wss.clients.forEach((c) => { if (c.readyState === 1) c.send(payload); });
+}
+
+// Pousse le contenu de la playlist/mediatheque a tous les telephones
+// connectes, pour eviter qu'ils doivent faire un pull-to-refresh manuel
+// apres une mutation declenchee a distance (remove/reorder/clear) ou un
+// upload. `payload` : { video, audio, playlists }.
+function pushPlaylists(payload) {
+  if (!wss) return;
+  const message = JSON.stringify({ type: "playlist", ...payload });
+  wss.clients.forEach((c) => { if (c.readyState === 1) c.send(message); });
 }
 
 function getStatus() {
@@ -239,4 +288,4 @@ const REMOTE_PAGE_HTML = `<!DOCTYPE html>
 </script>
 </body></html>`;
 
-module.exports = { start, stop, pushState, getStatus, get lastState() { return lastState; } };
+module.exports = { start, stop, pushState, pushPlaylists, getStatus, get lastState() { return lastState; } };

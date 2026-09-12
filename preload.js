@@ -89,6 +89,10 @@ contextBridge.exposeInMainWorld("playerAPI", {
   // Événements venant du processus principal
   onThumbnailReady: (cb) => on("media:thumbnail-ready", cb),
   onMediaAddedExternally: (cb) => on("media:added-externally", cb),
+  // Playlist modifiee a distance (téléphone) : remove/reorder/clear via
+  // la télécommande. Meme forme que onMediaAddedExternally mais sans le
+  // toast "Ajouté depuis l'Explorateur Windows" qui n'a pas de sens ici.
+  onLibraryChangedRemotely: (cb) => on("media:library-changed", cb),
 
   // Intégration au menu contextuel de l'Explorateur Windows
   getExplorerIntegrationStatus: () => ipcRenderer.invoke("explorer:get-status"),

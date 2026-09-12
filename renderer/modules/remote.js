@@ -33,6 +33,32 @@ App.remote = (() => {
       case "mute": dom.mute.click(); break;
       case "vol-up": dom.volume.value = Math.min(100, Number(dom.volume.value) + 5); dom.volume.oninput(); break;
       case "vol-down": dom.volume.value = Math.max(0, Number(dom.volume.value) - 5); dom.volume.oninput(); break;
+      case "set-volume":
+        // { value } en 0..1, convention cotè télécommande mobile.
+        if (typeof cmd.value === "number") {
+          dom.volume.value = Math.round(Math.max(0, Math.min(1, cmd.value)) * 100);
+          dom.volume.oninput();
+        }
+        break;
+      case "stop":
+        // Pas de vrai "stop" distinct de pause dans le lecteur : on met
+        // en pause et on revient au début, ce qui correspond à ce
+        // qu'un utilisateur attend d'un bouton Stop sur une télécommande.
+        App.activeEl().pause();
+        App.activeEl().currentTime = 0;
+        break;
+      // Pavé directionnel de la télécommande mobile : repris des mêmes
+      // raccourcis clavier que ceux déjà en place (voir keyboard.js) pour
+      // rester cohérent entre clavier et télécommande — pas de "menu"
+      // de navigation dédié dans ce lecteur, donc haut/bas pilotent le
+      // volume et gauche/droite le seek, comme les flèches du clavier.
+      case "nav-up": dom.volume.value = Math.min(100, Number(dom.volume.value) + 5); dom.volume.oninput(); break;
+      case "nav-down": dom.volume.value = Math.max(0, Number(dom.volume.value) - 5); dom.volume.oninput(); break;
+      case "nav-left": App.player.seekBy(-5); break;
+      case "nav-right": App.player.seekBy(5); break;
+      case "nav-ok": App.player.togglePlay(); break;
+      case "menu": dom.sidebarToggle.click(); break;
+      case "fullscreen": dom.fullscreen.click(); break;
       case "seek": if (typeof cmd.value === "number") App.activeEl().currentTime = cmd.value; break;
       case "seek-by": if (typeof cmd.seconds === "number") App.player.seekBy(cmd.seconds); break;
       case "brightness-up": App.filters.set("brightness", Math.min(200, App.state.filters.brightness + 10)); break;
