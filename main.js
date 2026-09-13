@@ -728,12 +728,35 @@ function remoteContext() {
   };
 }
 
+// Affiche une boite de dialogue Accepter/Refuser quand un telephone sur
+// le meme reseau demande a s'appairer sans QR code (section 15 du
+// cahier des charges de la telecommande : "accepter/refuser une
+// demande d'appairage"). Non-bloquant : dialog.showMessageBox est deja
+// asynchrone, la fenetre principale reste utilisable pendant l'attente.
+async function handlePairRequest(request) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    remote.resolvePairRequest(request.id, false);
+    return;
+  }
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: "question",
+    buttons: ["Refuser", "Accepter"],
+    defaultId: 1,
+    cancelId: 0,
+    title: "Demande d'appairage",
+    message: `"${request.deviceName}" (${request.ip}) demande à se connecter à Central Media en tant que télécommande.`,
+    detail: "Accepte uniquement si tu reconnais cet appareil sur ton réseau.",
+  });
+  remote.resolvePairRequest(request.id, response === 1);
+}
+
 ipcMain.handle("remote:start", async () => {
   store.settings.remoteControl.enabled = true;
   persistStore();
   const info = await remote.start(store.settings.remoteControl.port, {
     onCommand: handleRemoteCommand,
     getContext: remoteContext,
+    onPairRequest: handlePairRequest,
   });
   if (info.running) {
     try {
@@ -1094,9 +1117,14 @@ app.whenReady().then(() => {
   updater.setup(); 
 
   if (store.settings.remoteControl.enabled) {
+    // Meme options completes que le demarrage manuel (ipcMain "remote:start")
+    // — la version precedente ne passait pas getContext, ce qui aurait
+    // silencieusement casse /api/library, /api/browse, l'apercu ecran,
+    // etc. lorsque la telecommande demarre automatiquement au lancement.
     remote.start(store.settings.remoteControl.port, {
-      onCommand: (cmd) => broadcast("remote:command", cmd),
-      getState: () => remote.lastState,
+      onCommand: handleRemoteCommand,
+      getContext: remoteContext,
+      onPairRequest: handlePairRequest,
     }).catch(() => {});
   }
 

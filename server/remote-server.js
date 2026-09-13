@@ -10,6 +10,8 @@
 //
 // Routes HTTP :
 //   GET  /api/ping                -> { ok, name }                (pas de token requis, sert à tester une IP saisie à la main)
+//   POST /api/pair/request {deviceName} -> demande d'appairage sans QR, sur le même réseau (pas de token requis)
+//   GET  /api/pair/status?requestId=... -> statut de la demande, renvoie le token si acceptée (pas de token requis)
 //   GET  /api/state               -> état courant du lecteur
 //   POST /api/command   {type,...}-> envoie une commande (voir handleCommand côté renderer)
 //   GET  /api/library?type=video|audio -> playlist en cours (fichiers ajoutés au lecteur)
@@ -37,17 +39,36 @@ let wss = null;
 let currentPort = null;
 let onCommand = null;
 let getContext = null; // () => { library, playlists, browse(p), onUpload(filePath, mediaType) }
+let onPairRequest = null; // (request) => void — affiche la boite Accepter/Refuser cote PC
+const pairRequests = new Map(); // requestId -> { id, deviceName, ip, status, createdAt }
+const PAIR_REQUEST_TTL_MS = 60_000;
 let lastState = { status: "idle" };
 let pairToken = null;
 
-function localIPv4() {
+function networkCandidates() {
   const nets = os.networkInterfaces();
+  const virtualAdapter = /virtualbox|vmware|hyper-v|vethernet|docker|wsl|loopback|tailscale|zerotier|tap-windows|tap\d|tun\d|ppp|bluetooth|npcap|isatap/i;
+  const candidates = [];
   for (const name of Object.keys(nets)) {
-    for (const net of nets[name]) {
-      if (net.family === "IPv4" && !net.internal) return net.address;
+    for (const net of nets[name] || []) {
+      if (net.family === "IPv4" && !net.internal) candidates.push({ name, address: net.address });
     }
   }
-  return "127.0.0.1";
+  const real = candidates.filter((c) => !virtualAdapter.test(c.name));
+  return real.length ? real : candidates;
+}
+
+function localIPv4() {
+  // Bug corrige : l'ancienne version prenait la premiere IPv4 non-interne
+  // trouvee, sans distinguer une vraie carte Wi-Fi/Ethernet d'un
+  // adaptateur virtuel (VPN, VMware/VirtualBox, Hyper-V, Docker/WSL,
+  // Tailscale/ZeroTier...). Ces adaptateurs virtuels apparaissent souvent
+  // AVANT la vraie carte reseau dans os.networkInterfaces(), ce qui
+  // faisait afficher dans le QR code une IP injoignable depuis le
+  // telephone meme si les deux appareils sont sur le meme Wi-Fi.
+  const pool = networkCandidates();
+  const preferred = pool.find((c) => /wi-?fi|wlan|ethernet|^eth\d|^en\d/i.test(c.name));
+  return (preferred || pool[0] || { address: "127.0.0.1" }).address;
 }
 
 function checkToken(req, res, next) {
@@ -101,6 +122,7 @@ async function start(port, opts = {}) {
 
   onCommand = opts.onCommand || null;
   getContext = opts.getContext || (() => ({}));
+  onPairRequest = opts.onPairRequest || null;
   pairToken = crypto.randomBytes(16).toString("hex");
 
   const uploadDir = opts.uploadDir || path.join(os.tmpdir(), "central-media-incoming");
@@ -118,7 +140,48 @@ async function start(port, opts = {}) {
 
   app.get("/api/ping", (_req, res) => res.json({ ok: true, name: "Central Media" }));
 
-  app.use("/api", (req, res, next) => (req.path === "/ping" ? next() : checkToken(req, res, next)));
+  // POST /api/pair/request { deviceName } -> demande d'appairage sans QR
+  // code, pour deux appareils deja sur le meme reseau. Le PC affiche une
+  // boite de dialogue Accepter/Refuser (main.js -> onPairRequest) ; le
+  // telephone poll /api/pair/status en attendant la reponse. Le token
+  // renvoye en cas d'acceptation est le meme pairToken global que celui
+  // du QR code — pas de notion de token par appareil dans ce serveur.
+  app.post("/api/pair/request", (req, res) => {
+    if (!pairToken) return res.status(503).json({ error: "remote-control-disabled" });
+    const requestId = crypto.randomBytes(8).toString("hex");
+    const deviceName = String(req.body?.deviceName || "Telephone").slice(0, 60);
+    const request = {
+      id: requestId,
+      deviceName,
+      ip: req.ip?.replace("::ffff:", "") || "?",
+      status: "pending",
+      createdAt: Date.now(),
+    };
+    pairRequests.set(requestId, request);
+    // Expire automatiquement une demande jamais traitee (utilisateur qui
+    // ignore la boite de dialogue, ou app PC fermee entre-temps).
+    setTimeout(() => {
+      const r = pairRequests.get(requestId);
+      if (r && r.status === "pending") r.status = "expired";
+    }, PAIR_REQUEST_TTL_MS);
+    if (onPairRequest) onPairRequest(request);
+    res.json({ requestId });
+  });
+
+  app.get("/api/pair/status", (req, res) => {
+    const request = pairRequests.get(req.query.requestId);
+    if (!request) return res.status(404).json({ status: "not-found" });
+    if (request.status === "accepted") {
+      return res.json({ status: "accepted", token: pairToken, name: "Central Media" });
+    }
+    res.json({ status: request.status });
+  });
+
+  // /ping et /pair/* restent accessibles sans token : ce sont justement
+  // les routes qui permettent de decouvrir le PC et de demander un
+  // appairage sans en avoir un au prealable.
+  const publicPaths = new Set(["/ping", "/pair/request", "/pair/status"]);
+  app.use("/api", (req, res, next) => (publicPaths.has(req.path) ? next() : checkToken(req, res, next)));
 
   app.get("/api/state", (_req, res) => res.json(lastState));
 
@@ -221,6 +284,7 @@ async function stop() {
   if (server) { await new Promise((resolve) => server.close(resolve)); server = null; }
   currentPort = null;
   pairToken = null;
+  pairRequests.clear();
 }
 
 function pushState(state) {
@@ -240,13 +304,26 @@ function pushPlaylists(payload) {
   wss.clients.forEach((c) => { if (c.readyState === 1) c.send(message); });
 }
 
+// Appelee par main.js une fois que l'utilisateur a Accepte/Refuse la
+// demande d'appairage dans la boite de dialogue Electron.
+function resolvePairRequest(requestId, accepted) {
+  const request = pairRequests.get(requestId);
+  if (!request) return;
+  request.status = accepted ? "accepted" : "refused";
+}
+
 function getStatus() {
   if (!currentPort) return { running: false };
   const ip = localIPv4();
+  // Autres IP reelles detectees, pour diagnostiquer manuellement le cas
+  // (rare) ou la mauvaise carte reseau serait quand meme choisie sur une
+  // machine avec plusieurs interfaces physiques actives (Wi-Fi + Ethernet).
+  const alternativeIps = networkCandidates().map((c) => c.address).filter((a) => a !== ip);
   return {
     running: true,
     port: currentPort,
     ip,
+    alternativeIps,
     token: pairToken,
     url: `http://${ip}:${currentPort}/remote`,
     wsUrl: `ws://${ip}:${currentPort}/ws?token=${pairToken}`,
@@ -288,4 +365,4 @@ const REMOTE_PAGE_HTML = `<!DOCTYPE html>
 </script>
 </body></html>`;
 
-module.exports = { start, stop, pushState, pushPlaylists, getStatus, get lastState() { return lastState; } };
+module.exports = { start, stop, pushState, pushPlaylists, resolvePairRequest, getStatus, get lastState() { return lastState; } };

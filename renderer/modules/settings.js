@@ -153,10 +153,12 @@ App.settings = (() => {
   function renderRemoteStatus(root) {
     const holder = root.querySelector("#remoteQrHolder");
     if (!state.remoteStatus.running) { holder.innerHTML = ""; return; }
+    const alt = state.remoteStatus.alternativeIps || [];
     holder.innerHTML = `
       <div class="qr-box">
         ${state.remoteStatus.qrDataUrl ? `<img src="${state.remoteStatus.qrDataUrl}">` : ""}
         <div class="qr-url">${state.remoteStatus.url}</div>
+        ${alt.length ? `<div class="qr-alt-ips">Plusieurs cartes reseau actives detectees. Si le telephone n'arrive pas a se connecter avec cette adresse, essaie de forcer manuellement l'une de celles-ci : ${alt.join(", ")}</div>` : ""}
       </div>`;
   }
 
