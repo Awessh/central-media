@@ -637,8 +637,10 @@ function handleRemoteCommand(cmd) {
   // la fois le renderer (pour rafraichir l'UI si la fenetre est ouverte
   // sur la playlist) et les telephones connectes.
   if (cmd.type === "remove-item") {
-    // { type, id }
-    const key = playlistKey(cmd.type || "video");
+    // { mediaType, id } — attention : cmd.type vaut deja "remove-item"
+    // ici (c'est le discriminant de la commande), d'ou l'usage d'un
+    // champ separe mediaType pour la playlist visee.
+    const key = playlistKey(cmd.mediaType || "video");
     store.media[key] = store.media[key].filter((it) => it.id !== cmd.id);
     persistStore();
     broadcast("media:library-changed");
@@ -646,8 +648,8 @@ function handleRemoteCommand(cmd) {
     return;
   }
   if (cmd.type === "reorder-item") {
-    // { type, orderedIds }
-    const key = playlistKey(cmd.type || "video");
+    // { mediaType, orderedIds }
+    const key = playlistKey(cmd.mediaType || "video");
     const byId = new Map(store.media[key].map((it) => [it.id, it]));
     store.media[key] = (cmd.orderedIds || []).map((id) => byId.get(id)).filter(Boolean);
     persistStore();
@@ -656,8 +658,8 @@ function handleRemoteCommand(cmd) {
     return;
   }
   if (cmd.type === "clear-playlist") {
-    // { type }
-    store.media[playlistKey(cmd.type || "video")] = [];
+    // { mediaType }
+    store.media[playlistKey(cmd.mediaType || "video")] = [];
     persistStore();
     broadcast("media:library-changed");
     pushPlaylistsToPhones();

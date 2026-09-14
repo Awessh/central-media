@@ -1,6 +1,6 @@
 {
   "name": "central-media",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "Lecteur vidéo & audio autonome (streaming, playlists, sous-titres, télécommande...)",
   "main": "main.js",
   "author": "Awesshhh",
