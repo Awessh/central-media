@@ -13,6 +13,7 @@ App.remote = (() => {
     const el = App.activeEl();
     api.pushRemoteState({
       title: state.currentTitle,
+      path: state.currentPath, // necessaire pour basculer la lecture vers le telephone sans tout redemarrer
       mode: state.mode,
       paused: el.paused,
       currentTime: el.currentTime,
